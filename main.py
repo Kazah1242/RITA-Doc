@@ -107,29 +107,33 @@ class DashboardFrame(ctk.CTkFrame):
         self.log_label.pack(side="right", padx=20)
 
     def setup_text_tags(self):
-        """Настройка стилей для красивого отображения контента"""
+        """Настройка стилей для красивого отображения контента (с обходом блокировки CTk)"""
         font_family = "Helvetica"
         text_color = "#1f2937" if ctk.get_appearance_mode() == "Light" else "#f9fafb"
+        bg_color = "#f3f4f6" if ctk.get_appearance_mode() == "Light" else "#2b2b36"
+        
+        # Обращаемся напрямую к базовому виджету tk.Text через _textbox
+        # и используем нативные кортежи шрифтов (family, size, weight)
+        tb = self.article_textbox._textbox
         
         # Заголовки
-        self.article_textbox.tag_config("h1", font=ctk.CTkFont(family=font_family, size=28, weight="bold"), foreground=text_color, spacing1=20, spacing3=20)
-        self.article_textbox.tag_config("h2", font=ctk.CTkFont(family=font_family, size=22, weight="bold"), foreground=text_color, spacing1=15, spacing3=10)
-        self.article_textbox.tag_config("h3", font=ctk.CTkFont(family=font_family, size=18, weight="bold"), foreground=text_color, spacing1=10, spacing3=5)
-        self.article_textbox.tag_config("h4", font=ctk.CTkFont(family=font_family, size=16, weight="bold"), foreground=text_color, spacing1=10, spacing3=5)
+        tb.tag_config("h1", font=(font_family, 24, "bold"), foreground=text_color, spacing1=20, spacing3=20)
+        tb.tag_config("h2", font=(font_family, 20, "bold"), foreground=text_color, spacing1=15, spacing3=10)
+        tb.tag_config("h3", font=(font_family, 16, "bold"), foreground=text_color, spacing1=10, spacing3=5)
+        tb.tag_config("h4", font=(font_family, 14, "bold"), foreground=text_color, spacing1=10, spacing3=5)
         
         # Основной текст
-        self.article_textbox.tag_config("p", font=ctk.CTkFont(family=font_family, size=15), foreground=text_color, spacing1=5, spacing3=5)
+        tb.tag_config("p", font=(font_family, 13), foreground=text_color, spacing1=5, spacing3=5)
         
         # Списки
-        self.article_textbox.tag_config("li", font=ctk.CTkFont(family=font_family, size=15), foreground=text_color, lmargin1=25, lmargin2=40, spacing1=3, spacing3=3)
+        tb.tag_config("li", font=(font_family, 13), foreground=text_color, lmargin1=25, lmargin2=40, spacing1=3, spacing3=3)
         
-        # Таблицы (Моноширинный шрифт для выравнивания)
-        bg_color = "#f3f4f6" if ctk.get_appearance_mode() == "Light" else "#2b2b36"
-        self.article_textbox.tag_config("table", font=ctk.CTkFont(family="Courier New", size=13), foreground=text_color, background=bg_color, spacing1=5, spacing3=5)
+        # Таблицы (Моноширинный шрифт для выравнивания колонок)
+        tb.tag_config("table", font=("Courier New", 12), foreground=text_color, background=bg_color, spacing1=5, spacing3=5)
         
         # Заглушки изображений
-        self.article_textbox.tag_config("image_placeholder", font=ctk.CTkFont(family=font_family, size=13, slant="italic"), foreground="#9ca3af", justify="center", spacing1=10, spacing3=10)
-
+        tb.tag_config("image_placeholder", font=(font_family, 12, "italic"), foreground="#9ca3af", justify="center", spacing1=10, spacing3=10)
+        
     def clean_html_text(self, text):
         """Очищает текст от мусорных HTML тегов и конвертирует переносы"""
         text = str(text)
