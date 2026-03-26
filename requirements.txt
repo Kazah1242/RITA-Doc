@@ -16,6 +16,9 @@ tkinter-tooltip>=2.0.0
 # Color utilities for modern gradients
 colorama>=0.4.0
 
+# SVG rendering for icons
+cairosvg>=2.7.1
+
 # --- AI & LLM Dependencies ---
 # LangChain ecosystem
 langchain>=0.1.0

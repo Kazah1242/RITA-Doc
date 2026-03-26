@@ -1,11 +1,10 @@
-# filename: rita_ai.py
 import os
 import re
 from typing import List
 
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings # Обновленный импорт без DeprecationWarning
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
@@ -13,40 +12,36 @@ from langchain_openai import ChatOpenAI
 class RitaAIAssistant:
     def __init__(self, docs_dir: str = "articles"):
         self.docs_dir = docs_dir
-        self.index_path = "rita_faiss_index" # Кэш базы на диске
+        self.index_path = "rita_faiss_index"
         self.vector_store = None
         
-        # Локальная модель эмбеддингов
         self.embeddings = HuggingFaceEmbeddings(
             model_name="intfloat/multilingual-e5-small"
         )
         
-        # Облачная LLM (StepFun 3.5 Flash) через OpenRouter
-        api_key = os.getenv("OPENROUTER_API_KEY", "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")
+        api_key = os.getenv("OPENROUTER_API_KEY", "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")
         
         self.llm = ChatOpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=api_key,
-            model="stepfun/step-3.5-flash:free", # Бесплатная модель StepFun
+            model="stepfun/step-3.5-flash:free",
             temperature=0.0, 
+            streaming=True, # ВАЖНО: Включаем потоковую передачу данных!
             default_headers={"HTTP-Referer": "http://localhost:5000", "X-Title": "RITA Docs"}
         )
 
-        # Промпт с "Цепочкой рассуждений" (Chain of Thought)
         self.prompt_template = ChatPromptTemplate.from_messages([
-            ("system", """Ты — Senior системный аналитик и ИИ-ассистент по документации RITA.
-Твоя абсолютная цель — дать 100% точный ответ, основанный ИСКЛЮЧИТЕЛЬНО на предоставленном контексте.
+            ("system", """Ты — Senior ИИ-ассистент платформы RITA. 
+Твоя цель - давать точные ответы на основе документации.
 
-ТВОЙ АЛГОРИТМ РАБОТЫ (СТРОГО ОБЯЗАТЕЛЕН):
-1. Сначала создай блок <thinking>...</thinking>. Внутри него:
-   - Проанализируй вопрос пользователя.
-   - Найди в предоставленном контексте точные цитаты или факты, относящиеся к вопросу.
-   - Оцени, достаточно ли информации для ответа. Если информации нет, прямо скажи об этом себе.
-2. Затем создай блок <answer>...</answer>. Внутри него:
-   - Напиши финальный, понятный ответ в формате Markdown.
-   - Если в <thinking> ты понял, что информации нет, твой ответ должен быть: "К сожалению, в текущей документации RITA нет информации по этому вопросу." Не выдумывай ничего от себя.
+АЛГОРИТМ:
+1. Если пользователь просто здоровается - поздоровайся и предложи помощь. (Теги <thinking> не нужны).
+2. На технические вопросы отвечай так:
+   - ОБЯЗАТЕЛЬНО начни с <thinking>...</thinking>. Подробно разбери запрос и найди факты в контексте.
+   - Затем напиши <answer>...</answer> с красивым ответом в Markdown.
+   - Если информации в контексте нет, честно скажи об этом.
 
-ПРЕДОСТАВЛЕННЫЙ КОНТЕКСТ ИЗ ДОКУМЕНТАЦИИ:
+КОНТЕКСТ ДОКУМЕНТАЦИИ:
 {context}"""),
             ("user", "{question}")
         ])
@@ -54,90 +49,81 @@ class RitaAIAssistant:
         self._try_load_existing_db()
 
     def _try_load_existing_db(self) -> None:
-        """Загрузка существующего FAISS индекса с диска."""
         if os.path.exists(self.index_path):
-            print("📦 Найден кэш векторной базы. Загрузка...")
-            self.vector_store = FAISS.load_local(
-                self.index_path, 
-                self.embeddings, 
-                allow_dangerous_deserialization=True
-            )
-            print("✅ База знаний успешно загружена из кэша!")
+            self.vector_store = FAISS.load_local(self.index_path, self.embeddings, allow_dangerous_deserialization=True)
 
     def build_knowledge_base(self, force_rebuild: bool = False) -> None:
-        """Чтение файлов, векторизация и сохранение индекса."""
         if not force_rebuild and self.vector_store is not None:
             return 
-
         if not os.path.exists(self.docs_dir) or not os.listdir(self.docs_dir):
-            raise FileNotFoundError(f"Папка {self.docs_dir} пуста или не существует.")
+            raise FileNotFoundError(f"Папка {self.docs_dir} пуста.")
 
-        print("🔄 Создание новой базы знаний. Чтение файлов...")
-        loader = DirectoryLoader(
-            self.docs_dir, 
-            glob="**/*.md", 
-            loader_cls=TextLoader, 
-            loader_kwargs={'autodetect_encoding': True}
-        )
+        loader = DirectoryLoader(self.docs_dir, glob="**/*.md", loader_cls=TextLoader, loader_kwargs={'autodetect_encoding': True})
         documents = loader.load()
 
-        # ИСПРАВЛЕНА СИНТАКСИЧЕСКАЯ ОШИБКА: добавлена 'r' перед строкой с регулярным выражением
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=150,
-            separators=["\n\n", "\n", r"(?<=\. )", " ", ""] 
-        )
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150, separators=["\n\n", "\n", r"(?<=\. )", " ", ""])
         chunks = text_splitter.split_documents(documents)
 
-        print("🧠 Векторизация и сохранение индекса на диск...")
         self.vector_store = FAISS.from_documents(chunks, self.embeddings)
         self.vector_store.save_local(self.index_path)
 
-    def ask(self, query: str) -> str:
-        """Поиск фрагментов и генерация ответа через облако."""
+    async def ask_stream(self, query: str):
+        """Асинхронный генератор, который стримит ответ в реальном времени."""
         if self.vector_store is None:
-            return "❌ База знаний не инициализирована. Пожалуйста, обновите документацию."
+            yield {"status": "error", "content": "❌ База знаний не инициализирована."}
+            return
 
-        docs = self.vector_store.similarity_search(query, k=6)
-        
-        context_parts = [
-            f"[Файл: {os.path.basename(doc.metadata.get('source', 'Неизвестный файл'))}]\n{doc.page_content}"
-            for doc in docs
-        ]
+        docs = self.vector_store.max_marginal_relevance_search(query, k=5, fetch_k=15)
+        context_parts = [f"[Файл: {os.path.basename(doc.metadata.get('source', 'Неизвестный файл'))}]\n{doc.page_content}" for doc in docs]
         context_text = "\n\n---\n\n".join(context_parts)
-        
         prompt = self.prompt_template.format_messages(context=context_text, question=query)
         
+        raw_content = ""
         try:
-            response = self.llm.invoke(prompt)
-            raw_content = response.content
-            return self._parse_and_format_response(raw_content, docs)
+            # Читаем поток данных от нейросети
+            async for chunk in self.llm.astream(prompt):
+                if chunk.content:
+                    raw_content += chunk.content
+                    yield self._parse_stream_state(raw_content, docs, is_final=False)
+            
+            # Финальный вызов (когда генерация завершена)
+            yield self._parse_stream_state(raw_content, docs, is_final=True)
+            
         except Exception as e:
-            return f"❌ Ошибка вызова нейросети: {str(e)}\nУбедитесь, что API-ключ OpenRouter введен верно."
+            yield {"status": "error", "content": f"❌ Ошибка вызова нейросети: {str(e)}"}
 
-    def _parse_and_format_response(self, raw_content: str, docs: List) -> str:
-        """Парсинг Chain of Thought и финального ответа."""
-        thinking_match = re.search(r'<thinking>(.*?)</thinking>', raw_content, re.DOTALL | re.IGNORECASE)
-        answer_match = re.search(r'<answer>(.*?)</answer>', raw_content, re.DOTALL | re.IGNORECASE)
-        
-        if answer_match:
-            answer_text = answer_match.group(1).strip()
+    def _parse_stream_state(self, raw_content: str, docs: List, is_final: bool) -> dict:
+        """Парсит сырой текст на лету, вытаскивая мысли и сам ответ."""
+        thinking_text = ""
+        answer_text = ""
+        is_thinking_done = False
+
+        think_start = raw_content.find("<thinking>")
+        if think_start != -1:
+            think_end = raw_content.find("</thinking>")
+            if think_end != -1:
+                thinking_text = raw_content[think_start + 10:think_end].strip()
+                is_thinking_done = True
+            else:
+                thinking_text = raw_content[think_start + 10:].strip()
+                
+        ans_start = raw_content.find("<answer>")
+        if ans_start != -1:
+            ans_end = raw_content.find("</answer>")
+            if ans_end != -1:
+                answer_text = raw_content[ans_start + 8:ans_end].strip()
+            else:
+                answer_text = raw_content[ans_start + 8:].strip()
         else:
-            answer_text = re.sub(r'<thinking>.*?</thinking>', '', raw_content, flags=re.DOTALL).strip()
-            if not answer_text:
-                answer_text = raw_content
+            if think_start == -1 and not raw_content.startswith("<"):
+                 answer_text = raw_content
 
-        thinking_text = thinking_match.group(1).strip() if thinking_match else ""
+        sources = list(set([os.path.basename(doc.metadata.get('source', '')) for doc in docs])) if docs else []
         
-        final_output = ""
-        if thinking_text:
-            formatted_thinking = thinking_text.replace('\n', '\n> ')
-            final_output += f"💭 **Ход мыслей ИИ:**\n> {formatted_thinking}\n\n---\n\n"
-            
-        final_output += answer_text
-        
-        sources = list(set([os.path.basename(doc.metadata.get('source', '')) for doc in docs]))
-        if sources:
-            final_output += f"\n\n📚 *Источники: {', '.join(sources)}*"
-            
-        return final_output
+        return {
+            "status": "success",
+            "thinking": thinking_text,
+            "answer": answer_text,
+            "is_thinking_done": is_thinking_done or is_final,
+            "sources": sources if (is_final and "К сожалению" not in answer_text and answer_text) else []
+        }
