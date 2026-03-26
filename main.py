@@ -53,93 +53,71 @@ ICONS = {
 class StreamingMessage:
     def __init__(self, parent_scroll):
         self.parent_scroll = parent_scroll
-        
         self.msg_container = ctk.CTkFrame(self.parent_scroll, fg_color="transparent")
-        self.msg_container.pack(fill="x", padx=10, pady=(5, 15))
+        self.msg_container.pack(fill="x", padx=10, pady=(5, 10))
         self.msg_container.grid_columnconfigure(0, weight=1)
 
         self.bubble = ctk.CTkFrame(self.msg_container, fg_color=("#f4f4f5", "#27272a"), corner_radius=16)
         self.bubble.grid(row=0, column=0, sticky="w", padx=(0, 60))
         
-        self.thoughts_visible = True
         self.thought_container = ctk.CTkFrame(self.bubble, fg_color="transparent")
-        
         self.toggle_btn = ctk.CTkButton(
             self.thought_container, text="💭 Размышление...", fg_color="transparent", 
-            text_color=("#9ca3af", "#71717a"), hover_color=("#e4e4e7", "#3f3f46"),
-            height=24, font=ctk.CTkFont(size=13, slant="italic"), command=self.toggle_thoughts
+            text_color="#9ca3af", height=24, font=ctk.CTkFont(size=12, slant="italic"), 
+            command=self.toggle_thoughts
         )
         self.toggle_btn.pack(anchor="w", padx=10, pady=(10, 0))
         
-        self.thought_tb = ctk.CTkTextbox(
-            self.thought_container, wrap="word", fg_color="transparent",
-            text_color=("#9ca3af", "#71717a"), font=ctk.CTkFont(size=13, slant="italic"),
-            height=30, width=550, border_spacing=0
-        )
+        self.thought_tb = ctk.CTkTextbox(self.thought_container, wrap="word", fg_color="transparent",
+            text_color="#9ca3af", font=ctk.CTkFont(size=13, slant="italic"), height=1, width=540)
         self.thought_tb.pack(padx=10, pady=(0, 5))
         
-        self.answer_tb = ctk.CTkTextbox(
-            self.bubble, wrap="word", fg_color="transparent",
-            text_color=("#1f2937", "#f9fafb"), font=ctk.CTkFont(size=15),
-            height=30, width=550, border_spacing=0
-        )
+        self.answer_tb = ctk.CTkTextbox(self.bubble, wrap="word", fg_color="transparent",
+            text_color=("#1f2937", "#f9fafb"), font=ctk.CTkFont(size=15), height=1, width=540)
         
-        self.has_thoughts = False
         self.auto_collapsed = False
 
     def toggle_thoughts(self):
-        if self.thoughts_visible:
+        if self.thought_tb.winfo_ismapped():
             self.thought_tb.pack_forget()
             self.toggle_btn.configure(text="💭 Показать ход мыслей")
         else:
             self.thought_tb.pack(padx=10, pady=(0, 5))
             self.toggle_btn.configure(text="💭 Скрыть ход мыслей")
-        self.thoughts_visible = not self.thoughts_visible
         self.parent_scroll._parent_canvas.yview_moveto(1.0)
 
     def update(self, data):
-        thinking = data.get("thinking", "")
-        answer = data.get("answer", "")
-        is_thinking_done = data.get("is_thinking_done", False)
-        sources = data.get("sources", [])
-        status = data.get("status", "success")
-
-        if status == "error":
-            self.answer_tb.pack(padx=15, pady=15)
-            self._update_tb(self.answer_tb, data.get("content", ""), is_ai=True)
-            return
-
+        thinking = data.get("thinking", "").strip()
+        answer = data.get("answer", "").strip()
+        
         if thinking:
-            self.has_thoughts = True
-            if not self.thought_container.winfo_ismapped() and not self.auto_collapsed:
-                self.thought_container.pack(fill="x")
-            self._update_tb(self.thought_tb, thinking, is_ai=True)
+            if not self.thought_container.winfo_ismapped(): self.thought_container.pack(fill="x")
+            self._update_tb(self.thought_tb, thinking)
 
-        if is_thinking_done and self.has_thoughts and not self.auto_collapsed:
+        if data.get("is_thinking_done") and thinking and not self.auto_collapsed:
             self.toggle_thoughts()
             self.auto_collapsed = True
 
-        if answer or sources:
-            if not self.answer_tb.winfo_ismapped():
-                self.answer_tb.pack(padx=15, pady=15)
-            
-            final_text = answer
-            if sources: final_text += f"\n\n📚 Источники: {', '.join(sources)}"
-            self._update_tb(self.answer_tb, final_text, is_ai=True)
+        if answer:
+            if not self.answer_tb.winfo_ismapped(): self.answer_tb.pack(padx=15, pady=(5, 15))
+            text = answer
+            if data.get("sources"): text += f"\n\n📚 Источники: {', '.join(data['sources'])}"
+            self._update_tb(self.answer_tb, text)
         
-        if self.parent_scroll._parent_canvas.yview()[1] >= 0.9:
-            self.parent_scroll._parent_canvas.yview_moveto(1.0)
+        self.parent_scroll._parent_canvas.yview_moveto(1.0)
 
-    def _update_tb(self, tb, text, is_ai=False):
+    def _update_tb(self, tb, text):
         tb.configure(state="normal")
         tb.delete("0.0", "end")
         tb.insert("0.0", text)
         
-        char_width = 8
-        calc_width = min(600, max(150, len(text) * char_width))
-        lines = text.count('\n') + (len(text) * char_width // calc_width) + 1
+        # Более точный расчет: 18 пикселей на строку + небольшой запас
+        # Ширина фиксирована для ИИ, чтобы избежать 'дерганья' интерфейса
+        char_count = len(text)
+        wrapped_lines = (char_count * 8 // 540) + text.count('\n') + 1
+        new_height = max(25, wrapped_lines * 20)
         
-        tb.configure(height=max(35, lines * 22), width=calc_width if not is_ai else 550)
+        tb.configure(height=new_height)
         tb.configure(state="disabled")
 
 class DashboardFrame(ctk.CTkFrame):
@@ -317,21 +295,26 @@ class DashboardFrame(ctk.CTkFrame):
         asyncio.run_coroutine_threadsafe(do_ask(), self.loop)
 
     def add_user_message(self, text):
+        text = text.strip()
         msg_container = ctk.CTkFrame(self.chat_history_scroll, fg_color="transparent")
-        msg_container.pack(fill="x", padx=10, pady=(5, 15))
+        msg_container.pack(fill="x", padx=10, pady=5)
         msg_container.grid_columnconfigure(0, weight=1)
 
         bubble = ctk.CTkFrame(msg_container, fg_color=("#2563eb", "#3b82f6"), corner_radius=16)
+        
+        # Динамическая ширина для пользователя
+        max_w = 500
+        calc_w = min(max_w, max(100, len(text) * 10 + 20))
+        lines = (len(text) * 10 // calc_w) + text.count('\n') + 1
+        
         bubble.grid(row=0, column=0, sticky="e", padx=(60, 10))
         
-        calc_width = min(500, max(50, len(text) * 9 + 30))
-        lines = text.count('\n') + (len(text) * 9 // calc_width) + 1
-        
-        tb = ctk.CTkTextbox(bubble, wrap="word", fg_color="transparent", text_color="#ffffff", font=ctk.CTkFont(size=15), height=max(35, lines * 22), width=calc_width)
+        tb = ctk.CTkTextbox(bubble, wrap="word", fg_color="transparent", text_color="#ffffff", 
+                            font=ctk.CTkFont(size=15), height=max(30, lines * 22), width=calc_w)
         tb.pack(padx=12, pady=8)
         tb.insert("0.0", text)
         tb.configure(state="disabled")
-        self.run_in_ui(self.chat_history_scroll._parent_canvas.yview_moveto, 1.0)
+        self.chat_history_scroll._parent_canvas.yview_moveto(1.0)
 
     def add_static_ai_message(self, text):
         msg_container = ctk.CTkFrame(self.chat_history_scroll, fg_color="transparent")

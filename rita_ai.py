@@ -10,38 +10,45 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 
 class RitaAIAssistant:
+    """
+    Интеллектуальный ассистент RITA.
+    Использует локальный сервер Ollama для генерации текста и 
+    локальные эмбеддинги для поиска по документации.
+    """
+    
     def __init__(self, docs_dir: str = "articles"):
         self.docs_dir = docs_dir
         self.index_path = "rita_faiss_index"
         self.vector_store = None
         
+        # 1. Локальные эмбеддинги (выполняются на CPU)
         self.embeddings = HuggingFaceEmbeddings(
             model_name="intfloat/multilingual-e5-small"
         )
         
-        api_key = os.getenv("OPENROUTER_API_KEY", "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")
-        
+        # 2. Подключение к локальной Ollama (через OpenAI-совместимый API)
+        # Убедись, что выполнена команда: ollama run qwen2.5:3b
         self.llm = ChatOpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=api_key,
-            model="stepfun/step-3.5-flash:free",
-            temperature=0.0, 
-            streaming=True, # ВАЖНО: Включаем потоковую передачу данных!
-            default_headers={"HTTP-Referer": "http://localhost:5000", "X-Title": "RITA Docs"}
+            base_url="http://localhost:11434/v1",
+            api_key="ollama", # Заглушка для совместимости
+            model="qwen2.5:3b",
+            temperature=0.1,
+            streaming=True
         )
 
+        # 3. Инструкции для модели
         self.prompt_template = ChatPromptTemplate.from_messages([
             ("system", """Ты — Senior ИИ-ассистент платформы RITA. 
-Твоя цель - давать точные ответы на основе документации.
+Твоя задача — давать точные и лаконичные ответы на основе предоставленной документации.
 
-АЛГОРИТМ:
-1. Если пользователь просто здоровается - поздоровайся и предложи помощь. (Теги <thinking> не нужны).
-2. На технические вопросы отвечай так:
-   - ОБЯЗАТЕЛЬНО начни с <thinking>...</thinking>. Подробно разбери запрос и найди факты в контексте.
-   - Затем напиши <answer>...</answer> с красивым ответом в Markdown.
-   - Если информации в контексте нет, честно скажи об этом.
+ПРАВИЛА ОТВЕТА:
+1. Если вопрос — просто приветствие, ответь вежливо и предложи помощь по RITA.
+2. Для технических вопросов используй формат:
+   - <thinking> Краткий анализ: какие файлы используем, что именно ищем. </thinking>
+   - <answer> Четкий ответ с использованием Markdown. </answer>
+3. Если в контексте нет информации, так и скажи: "В текущей документации информации нет". Не выдумывай факты.
 
-КОНТЕКСТ ДОКУМЕНТАЦИИ:
+КОНТЕКСТ ИЗ ДОКУМЕНТАЦИИ:
 {context}"""),
             ("user", "{question}")
         ])
@@ -49,54 +56,80 @@ class RitaAIAssistant:
         self._try_load_existing_db()
 
     def _try_load_existing_db(self) -> None:
+        """Загрузка кэша векторной базы с диска."""
         if os.path.exists(self.index_path):
-            self.vector_store = FAISS.load_local(self.index_path, self.embeddings, allow_dangerous_deserialization=True)
+            try:
+                self.vector_store = FAISS.load_local(
+                    self.index_path, 
+                    self.embeddings, 
+                    allow_dangerous_deserialization=True
+                )
+            except Exception:
+                self.vector_store = None
 
     def build_knowledge_base(self, force_rebuild: bool = False) -> None:
+        """Создание векторного индекса из Markdown файлов."""
         if not force_rebuild and self.vector_store is not None:
             return 
+
         if not os.path.exists(self.docs_dir) or not os.listdir(self.docs_dir):
             raise FileNotFoundError(f"Папка {self.docs_dir} пуста.")
 
-        loader = DirectoryLoader(self.docs_dir, glob="**/*.md", loader_cls=TextLoader, loader_kwargs={'autodetect_encoding': True})
+        loader = DirectoryLoader(
+            self.docs_dir, 
+            glob="**/*.md", 
+            loader_cls=TextLoader, 
+            loader_kwargs={'autodetect_encoding': True}
+        )
         documents = loader.load()
 
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150, separators=["\n\n", "\n", r"(?<=\. )", " ", ""])
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=800,
+            chunk_overlap=100,
+            separators=["\n\n", "\n", r"(?<=\. )", " ", ""]
+        )
         chunks = text_splitter.split_documents(documents)
 
         self.vector_store = FAISS.from_documents(chunks, self.embeddings)
         self.vector_store.save_local(self.index_path)
 
     async def ask_stream(self, query: str):
-        """Асинхронный генератор, который стримит ответ в реальном времени."""
+        """Асинхронный генератор для потоковой выдачи ответа."""
         if self.vector_store is None:
-            yield {"status": "error", "content": "❌ База знаний не инициализирована."}
+            yield {"status": "error", "content": "База знаний не инициализирована."}
             return
 
-        docs = self.vector_store.max_marginal_relevance_search(query, k=5, fetch_k=15)
-        context_parts = [f"[Файл: {os.path.basename(doc.metadata.get('source', 'Неизвестный файл'))}]\n{doc.page_content}" for doc in docs]
+        # Поиск релевантных фрагментов (k=4 для ускорения на CPU)
+        docs = self.vector_store.max_marginal_relevance_search(query, k=4, fetch_k=10)
+        
+        context_parts = [
+            f"[Файл: {os.path.basename(doc.metadata.get('source', ''))}]\n{doc.page_content}"
+            for doc in docs
+        ]
         context_text = "\n\n---\n\n".join(context_parts)
+        
         prompt = self.prompt_template.format_messages(context=context_text, question=query)
         
         raw_content = ""
         try:
-            # Читаем поток данных от нейросети
             async for chunk in self.llm.astream(prompt):
                 if chunk.content:
                     raw_content += chunk.content
                     yield self._parse_stream_state(raw_content, docs, is_final=False)
             
-            # Финальный вызов (когда генерация завершена)
             yield self._parse_stream_state(raw_content, docs, is_final=True)
             
         except Exception as e:
-            yield {"status": "error", "content": f"❌ Ошибка вызова нейросети: {str(e)}"}
+            yield {"status": "error", "content": f"Ошибка Ollama: {str(e)}"}
 
     def _parse_stream_state(self, raw_content: str, docs: List, is_final: bool) -> dict:
-        """Парсит сырой текст на лету, вытаскивая мысли и сам ответ."""
+        """Парсинг ответа на мысли и финальный текст."""
         thinking_text = ""
         answer_text = ""
         is_thinking_done = False
+
+        # Очистка от лишних пробелов в начале потока
+        raw_content = raw_content.lstrip()
 
         think_start = raw_content.find("<thinking>")
         if think_start != -1:
@@ -115,15 +148,18 @@ class RitaAIAssistant:
             else:
                 answer_text = raw_content[ans_start + 8:].strip()
         else:
-            if think_start == -1 and not raw_content.startswith("<"):
-                 answer_text = raw_content
+            # Если теги еще не появились или модель их проигнорировала
+            if think_start == -1:
+                answer_text = raw_content.strip()
 
-        sources = list(set([os.path.basename(doc.metadata.get('source', '')) for doc in docs])) if docs else []
-        
+        sources = []
+        if is_final and answer_text and "информации нет" not in answer_text.lower():
+            sources = list(set([os.path.basename(doc.metadata.get('source', '')) for doc in docs]))
+
         return {
             "status": "success",
             "thinking": thinking_text,
             "answer": answer_text,
             "is_thinking_done": is_thinking_done or is_final,
-            "sources": sources if (is_final and "К сожалению" not in answer_text and answer_text) else []
+            "sources": sources
         }
