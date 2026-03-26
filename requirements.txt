@@ -15,3 +15,17 @@ tkinter-tooltip>=2.0.0
 
 # Color utilities for modern gradients
 colorama>=0.4.0
+
+# --- AI & LLM Dependencies ---
+# LangChain ecosystem
+langchain>=0.1.0
+langchain-community>=0.0.10
+langchain-core>=0.1.10
+langchain-openai>=0.0.2
+langchain-text-splitters>=0.0.1
+
+# Vector Database (CPU version is lighter and sufficient for local text search)
+faiss-cpu>=1.7.4
+
+# Local Embeddings (HuggingFace)
+sentence-transformers>=2.2.2
