@@ -133,7 +133,7 @@ class DashboardFrame(ctk.CTkFrame):
         
         # Заглушки изображений
         tb.tag_config("image_placeholder", font=(font_family, 12, "italic"), foreground="#9ca3af", justify="center", spacing1=10, spacing3=10)
-        
+
     def clean_html_text(self, text):
         """Очищает текст от мусорных HTML тегов и конвертирует переносы"""
         text = str(text)
@@ -262,23 +262,54 @@ class DashboardFrame(ctk.CTkFrame):
         
         has_children = node["id"] in self.children_map
         
+        # Контейнер для текущей строки (чтобы отделить кнопку-шеврон от названия)
+        row_frame = ctk.CTkFrame(frame, fg_color="transparent", cursor="hand2")
+        row_frame.pack(fill="x")
+        
         if has_children:
             node["_expanded"] = False
-            btn = ctk.CTkButton(frame, text=f"› 📁 {node['title']}", anchor="w", 
-                                fg_color="transparent", text_color=("#111827", "#f9fafb"),
-                                hover_color=("#f3f4f6", "#27272a"), font=ctk.CTkFont(size=14, weight="bold"),
-                                height=30, command=lambda n=node, f=frame, l=level: self.toggle_node(n, f, l))
-            btn.pack(fill="x")
+            # Маленькая кнопка ТОЛЬКО для разворачивания (шеврон)
+            btn_toggle = ctk.CTkButton(row_frame, text="›", width=24, height=30, 
+                                       fg_color="transparent", hover_color=("#d1d5db", "#3f3f46"),
+                                       text_color=("#111827", "#f9fafb"), font=ctk.CTkFont(size=18, weight="bold"),
+                                       command=lambda n=node, f=frame, l=level: self.toggle_node(n, f, l))
+            btn_toggle.pack(side="left", padx=(0, 2))
+            node["_btn"] = btn_toggle
             node["_child_container"] = ctk.CTkFrame(frame, fg_color="transparent")
-            node["_btn"] = btn
+            icon = "📁"
+            font_weight = "bold"
         else:
-            self._render_single_item(node, frame)
+            # Невидимая заглушка вместо шеврона, чтобы текст обычных статей шел ровно по линии
+            spacer = ctk.CTkFrame(row_frame, width=24, height=30, fg_color="transparent")
+            spacer.pack(side="left", padx=(0, 2))
+            icon = "📄"
+            font_weight = "normal"
+
+        # Кликабельный заголовок для открытия самой статьи (как для папок, так и для файлов)
+        lbl = ctk.CTkLabel(row_frame, text=f"{icon} {node['title']}", anchor="w", 
+                           font=ctk.CTkFont(size=14, weight=font_weight), cursor="hand2")
+        lbl.pack(side="left", fill="x", expand=True, pady=4)
+
+        # Эффекты наведения
+        def on_enter(e): row_frame.configure(fg_color=("#e5e7eb", "#27272a"))
+        def on_leave(e): row_frame.configure(fg_color="transparent")
+        
+        row_frame.bind("<Enter>", on_enter)
+        row_frame.bind("<Leave>", on_leave)
+        lbl.bind("<Enter>", on_enter)
+        lbl.bind("<Leave>", on_leave)
+
+        # Обработка клика: теперь загружает статью по URL независимо от того, есть ли внутри подстатьи
+        lbl.bind("<Button-1>", lambda e, u=node['url']: self.load_article_content(u))
+        # Оборачиваем сам фрейм, чтобы клик в пустое пространство строки тоже срабатывал
+        row_frame.bind("<Button-1>", lambda e, u=node['url']: self.load_article_content(u))
 
     def toggle_node(self, node, parent_frame, level):
+        """Логика визуального изменения стрелочки и показа/скрытия подстатей"""
         container = node["_child_container"]
         if node["_expanded"]:
             container.pack_forget()
-            node["_btn"].configure(text=f"› 📁 {node['title']}")
+            node["_btn"].configure(text="›")
             node["_expanded"] = False
         else:
             if not container.winfo_children():
@@ -286,9 +317,9 @@ class DashboardFrame(ctk.CTkFrame):
                 for child in children:
                     self.render_node(child, container, level + 1)
             container.pack(fill="x")
-            node["_btn"].configure(text=f"⌄ 📂 {node['title']}")
+            node["_btn"].configure(text="⌄")
             node["_expanded"] = True
-
+            
     def load_article_content(self, url):
         self.article_textbox.configure(state="normal")
         self.article_textbox.delete("0.0", "end")
