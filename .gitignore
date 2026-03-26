@@ -14,7 +14,7 @@ app_settings.json
 rita_session.json
 
 # User-specific files
-.vscode
+.vsco
 .idea
 
 # OS generated files
