@@ -1,0 +1,23 @@
+# Byte-compiled / optimized / DLL files
+__pycache__
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+articles
+venv
+ENV
+env
+
+# Configuration and Sessions (Sensitive data)
+# Рекомендуется создать app_settings.json.example для других разработчиков
+app_settings.json
+rita_session.json
+
+# User-specific files
+.vsco
+.idea
+
+# OS generated files
+.DS_Store
+Thumbs.db
